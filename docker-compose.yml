@@ -1,0 +1,103 @@
+# Squarely — infra + services. `docker compose up` brings up the whole stack.
+# ponytail: single Postgres with 4 DBs (one per service, no shared tables) and a
+# single-broker KRaft Kafka. Split into separate DB instances / a Kafka cluster
+# only when independent scaling or HA actually becomes a requirement.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: squarely
+      POSTGRES_PASSWORD: squarely
+      POSTGRES_MULTIPLE_DATABASES: auth,groups,ledger,notify
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./infra/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squarely"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.7.0
+    ports:
+      - "29092:29092"          # host-side listener for local (non-container) clients
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  auth-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: auth-service } }
+    environment: &svc-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth
+      SPRING_DATASOURCE_USERNAME: squarely
+      SPRING_DATASOURCE_PASSWORD: squarely
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SECURITY_JWT_SECRET: dev-only-super-secret-change-me-256bit-minimum-length!!
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8081:8080"]
+
+  group-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: group-service } }
+    environment:
+      <<: *svc-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/groups
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8082:8080"]
+
+  ledger-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: ledger-service } }
+    environment:
+      <<: *svc-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ledger
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8083:8080"]
+
+  notification-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: notification-service } }
+    environment:
+      <<: *svc-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notify
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8084:8080"]
+
+volumes:
+  pgdata:

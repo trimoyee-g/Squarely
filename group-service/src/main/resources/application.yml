@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: group-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/groups}
+    username: ${SPRING_DATASOURCE_USERNAME:squarely}
+    password: ${SPRING_DATASOURCE_PASSWORD:squarely}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: true
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:dev-only-super-secret-change-me-256bit-minimum-length!!}
+  public-paths:   # none — all group endpoints require auth
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ledger-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/ledger}
+    username: ${SPRING_DATASOURCE_USERNAME:squarely}
+    password: ${SPRING_DATASOURCE_PASSWORD:squarely}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: ledger-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.squarely.common.events"
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:dev-only-super-secret-change-me-256bit-minimum-length!!}
+  public-paths:
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

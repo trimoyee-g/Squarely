@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/auth}
+    username: ${SPRING_DATASOURCE_USERNAME:squarely}
+    password: ${SPRING_DATASOURCE_PASSWORD:squarely}
+  jpa:
+    hibernate:
+      ddl-auto: validate      # Flyway owns the schema
+    open-in-view: false
+  flyway:
+    enabled: true
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:dev-only-super-secret-change-me-256bit-minimum-length!!}
+    access-ttl: PT15M
+    refresh-ttl: P30D
+  public-paths: /auth/signup,/auth/login,/auth/refresh
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

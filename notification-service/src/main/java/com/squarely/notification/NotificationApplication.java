@@ -1,0 +1,15 @@
+package com.squarely.notification;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@SpringBootApplication(scanBasePackages = {"com.squarely.notification", "com.squarely.common"})
+@EnableJpaRepositories(considerNestedRepositories = true)   // repos are nested in Repos.java
+@EnableScheduling
+public class NotificationApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(NotificationApplication.class, args);
+    }
+}
