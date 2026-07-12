@@ -49,4 +49,31 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <!-- JaCoCo coverage, inherited by every module. Agent instruments the surefire JVM
+         (so unit + in-process integration tests both count); report runs in the test phase.
+         Version managed by the Spring Boot BOM. -->
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

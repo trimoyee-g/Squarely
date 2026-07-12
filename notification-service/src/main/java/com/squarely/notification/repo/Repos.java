@@ -29,5 +29,6 @@ public final class Repos {
     public interface ObligationRepository extends JpaRepository<PaymentObligation, Long> {
         List<PaymentObligation> findByStatusInAndDueDateLessThanEqual(List<Status> statuses, LocalDate date);
         List<PaymentObligation> findByRecurringRuleIdInOrderByDueDateAsc(List<Long> ruleIds);
+        boolean existsByRecurringRuleIdAndDueDate(Long recurringRuleId, LocalDate dueDate);
     }
 }

@@ -32,12 +32,14 @@ public class LedgerService {
     public void recordExpense(Events.ExpenseAdded e) {
         e.splits().forEach((userId, owed) -> {
             if (userId.equals(e.paidByUserId()) || owed.signum() == 0) return;
-            try {
-                ledger.saveAndFlush(new LedgerEntry(e.groupId(), userId, e.paidByUserId(),
-                        owed, e.currency(), EntryType.EXPENSE, "EXPENSE", e.expenseId()));
-            } catch (DataIntegrityViolationException dup) {
-                // Already recorded this expense split — safe to ignore.
-            }
+            // Idempotent on redelivery: skip splits already recorded, so we never flush a
+            // duplicate INSERT (which would poison this @Transactional's Hibernate session).
+            // uq_ledger_ref stays as the concurrency backstop — on a rare race the loser's
+            // tx fails and Kafka redelivery then finds the row via this check.
+            if (ledger.existsByRefTypeAndRefIdAndDebtorIdAndCreditorId(
+                    "EXPENSE", e.expenseId(), userId, e.paidByUserId())) return;
+            ledger.save(new LedgerEntry(e.groupId(), userId, e.paidByUserId(),
+                    owed, e.currency(), EntryType.EXPENSE, "EXPENSE", e.expenseId()));
         });
     }
 

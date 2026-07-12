@@ -7,7 +7,6 @@ import com.squarely.notification.domain.RecurringRule.Cadence;
 import com.squarely.notification.recurring.RecurrenceCalculator;
 import com.squarely.notification.repo.Repos.ObligationRepository;
 import com.squarely.notification.repo.Repos.RecurringRuleRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,15 +56,16 @@ public class RecurringService {
         LocalDate horizon = today.plusDays(LOOKAHEAD_DAYS);
         for (RecurringRule rule : rules.findByActiveTrueAndNextDueDateLessThanEqual(horizon)) {
             LocalDate due = rule.getNextDueDate();
-            try {
-                obligations.saveAndFlush(new PaymentObligation(
+            // Idempotent: skip if this (rule, due) obligation already exists, so a re-run
+            // tick never flushes a duplicate INSERT (which would poison this @Transactional).
+            // uq_obligation_rule_due is the concurrency backstop for a rare double-fire.
+            if (!obligations.existsByRecurringRuleIdAndDueDate(rule.getId(), due)) {
+                obligations.save(new PaymentObligation(
                         rule.getId(), due, rule.getAmount(), rule.getCurrency(), rule.getDescription()));
                 String msg = "Upcoming: %s (%s %s) due %s"
                         .formatted(rule.getDescription(), rule.getCurrency(), rule.getAmount(), due);
                 rule.getMemberUserIds().forEach(u ->
                         notifications.notify(u, "PAYMENT_DUE", msg, "OBLIGATION", rule.getId()));
-            } catch (DataIntegrityViolationException dup) {
-                // Obligation for this (rule, due date) already exists — idempotent.
             }
             // Advance one period so the next tick generates the following obligation.
             rule.setNextDueDate(RecurrenceCalculator.next(rule.getCadence(), rule.getIntervalDays(), due));

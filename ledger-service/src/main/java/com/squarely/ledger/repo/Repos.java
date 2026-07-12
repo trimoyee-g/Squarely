@@ -14,6 +14,8 @@ public final class Repos {
     public interface LedgerRepository extends JpaRepository<LedgerEntry, Long> {
         List<LedgerEntry> findByGroupId(Long groupId);
         List<LedgerEntry> findByDebtorIdOrCreditorId(Long debtorId, Long creditorId);
+        boolean existsByRefTypeAndRefIdAndDebtorIdAndCreditorId(
+                String refType, Long refId, Long debtorId, Long creditorId);
     }
 
     public interface SettlementRepository extends JpaRepository<Settlement, Long> {
