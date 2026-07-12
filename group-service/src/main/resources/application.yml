@@ -7,7 +7,7 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/groups}
     username: ${SPRING_DATASOURCE_USERNAME:squarely}
-    password: ${SPRING_DATASOURCE_PASSWORD:squarely}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -24,7 +24,7 @@ spring:
 
 security:
   jwt:
-    secret: ${SECURITY_JWT_SECRET:dev-only-super-secret-change-me-256bit-minimum-length!!}
+    secret: ${SECURITY_JWT_SECRET}
   public-paths:   # none — all group endpoints require auth
 
 management:

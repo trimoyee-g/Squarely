@@ -24,6 +24,11 @@ public class RefreshToken {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    // All tokens rotated from one login share a familyId, so reuse of any one
+    // can revoke the whole chain.
+    @Column(name = "family_id", nullable = false)
+    private String familyId;
+
     @Column(name = "token_hash", nullable = false, unique = true)
     private String tokenHash;
 
@@ -37,13 +42,10 @@ public class RefreshToken {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
-    public RefreshToken(Long userId, String tokenHash, Instant expiresAt) {
+    public RefreshToken(Long userId, String familyId, String tokenHash, Instant expiresAt) {
         this.userId = userId;
+        this.familyId = familyId;
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
-    }
-
-    public boolean isActive() {
-        return !revoked && expiresAt.isAfter(Instant.now());
     }
 }

@@ -110,7 +110,7 @@ class AuthServiceTest {
 
     @Test
     void refreshRejectsRevokedToken() {
-        RefreshToken revoked = new RefreshToken(1L, "hash", Instant.now().plusSeconds(3600));
+        RefreshToken revoked = new RefreshToken(1L, "fam-1", "hash", Instant.now().plusSeconds(3600));
         revoked.setRevoked(true);
         when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(revoked));
         var ex = assertThrows(ResponseStatusException.class, () -> auth.refresh("raw"));
@@ -118,17 +118,30 @@ class AuthServiceTest {
     }
 
     @Test
+    void refreshReuseRevokesWholeFamily() {
+        RefreshToken revoked = new RefreshToken(1L, "fam-1", "hash", Instant.now().plusSeconds(3600));
+        revoked.setRevoked(true);
+        when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(revoked));
+        assertThrows(ResponseStatusException.class, () -> auth.refresh("raw"));
+        verify(refreshTokens).revokeAllForFamily("fam-1");
+        verify(refreshTokens, never()).save(any());
+    }
+
+    @Test
     void refreshRotatesTokenAndIssuesNew() {
-        RefreshToken active = new RefreshToken(1L, "hash", Instant.now().plusSeconds(3600));
+        RefreshToken active = new RefreshToken(1L, "fam-1", "hash", Instant.now().plusSeconds(3600));
         when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(active));
+        when(refreshTokens.revokeIfActive(any())).thenReturn(1); // we won the rotation race
         when(users.findById(1L)).thenReturn(Optional.of(userWithId(1L, "a@b.com", "HASHED")));
         when(jwt.generateAccessToken(1L, "a@b.com")).thenReturn("access-jwt");
 
         TokenResponse res = auth.refresh("raw");
 
         assertEquals("access-jwt", res.accessToken());
-        assertTrue(active.isRevoked(), "presented refresh token must be rotated/revoked");
-        verify(refreshTokens).save(any(RefreshToken.class)); // new token persisted
+        verify(refreshTokens).revokeIfActive(active.getId()); // presented token claimed atomically
+        ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(refreshTokens).save(saved.capture()); // new token persisted
+        assertEquals("fam-1", saved.getValue().getFamilyId(), "rotated token stays in the same family");
     }
 
     @Test

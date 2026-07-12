@@ -7,7 +7,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: squarely
-      POSTGRES_PASSWORD: squarely
+      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
       POSTGRES_MULTIPLE_DATABASES: auth,groups,ledger,notify
     ports:
       - "5432:5432"
@@ -56,10 +56,10 @@ services:
     environment: &svc-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth
       SPRING_DATASOURCE_USERNAME: squarely
-      SPRING_DATASOURCE_PASSWORD: squarely
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATA_REDIS_HOST: redis
-      SECURITY_JWT_SECRET: dev-only-super-secret-change-me-256bit-minimum-length!!
+      SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET}
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }

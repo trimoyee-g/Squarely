@@ -55,6 +55,18 @@
          Version managed by the Spring Boot BOM. -->
     <build>
         <plugins>
+            <!-- Tests boot the real Spring context but no prod secret is set; supply a
+                 throwaway one here so ${security.jwt.secret} resolves. ponytail: a fixed
+                 test value is fine — it never leaves the test JVM. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <security.jwt.secret>test-only-secret-not-used-outside-the-test-jvm-256bit!!</security.jwt.secret>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>

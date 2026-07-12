@@ -97,6 +97,60 @@ class AuthIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    private String refreshOk(String token) throws Exception {
+        var res = mvc.perform(post("/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(Map.of("refreshToken", token))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(res).get("refreshToken").asText();
+    }
+
+    @Test
+    void reuseOfRotatedTokenKillsTheWholeFamily() throws Exception {
+        String a = signup("mallory@example.com").get("refreshToken").asText();
+        String b = refreshOk(a);   // legit rotation: A -> B, A now revoked
+
+        // Attacker replays the leaked, already-rotated A. Reuse detected -> 401.
+        mvc.perform(post("/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(Map.of("refreshToken", a))))
+                .andExpect(status().isUnauthorized());
+
+        // The whole point of family revocation: B (the victim's live token) must be
+        // dead too. If this returns 200, the family revoke never actually committed.
+        mvc.perform(post("/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(Map.of("refreshToken", b))))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void concurrentRefreshWithSameTokenIssuesExactlyOnePair() throws Exception {
+        String refresh = signup("eve@example.com").get("refreshToken").asText();
+
+        int threads = 8;
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var statuses = java.util.Collections.synchronizedList(new java.util.ArrayList<Integer>());
+        for (int i = 0; i < threads; i++) {
+            pool.submit(() -> {
+                start.await();
+                statuses.add(mvc.perform(post("/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(Map.of("refreshToken", refresh)))).andReturn().getResponse().getStatus());
+                return null;
+            });
+        }
+        start.countDown();
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS));
+
+        // Single-use means single-use: one winner, everyone else is reuse.
+        assertEquals(1, statuses.stream().filter(s -> s == 200).count(), "rotation double-spend: " + statuses);
+        assertTrue(statuses.stream().allMatch(s -> s == 200 || s == 401), "unexpected statuses: " + statuses);
+        // NOTE: we deliberately do NOT assert the winner's new token still works. Under
+        // strict semantics the losers' family-revoke collaterally kills it, and the whole
+        // session ends. That is the intended trade: clients MUST single-flight refresh.
+        // See AuthService.refresh().
+    }
+
     @Test
     void meRequiresAuthentication() throws Exception {
         mvc.perform(get("/auth/me")).andExpect(status().isUnauthorized());
@@ -106,5 +160,32 @@ class AuthIntegrationTest {
         mvc.perform(get("/auth/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value("dave@example.com"));
+    }
+
+    @Test
+    void internalUsersResolvesNamesButNeverLeaksEmail() throws Exception {
+        User target = users.save(new User("victim@example.com", "$2a$hash", "Victim"));
+        User caller = users.save(new User("nosy@example.com", "$2a$hash", "Nosy"));
+        String token = jwt.generateAccessToken(caller.getId(), caller.getEmail());
+
+        mvc.perform(get("/auth/internal/users").param("ids", target.getId().toString())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].displayName").value("Victim"))  // name resolution still works
+                .andExpect(jsonPath("$[0].email").value(org.hamcrest.Matchers.nullValue())) // PII stripped
+                .andExpect(content().string(org.hamcrest.Matchers.not(     // and never on the wire
+                        org.hamcrest.Matchers.containsString("victim@example.com"))));
+    }
+
+    @Test
+    void internalUsersRejectsOversizedBatch() throws Exception {
+        User caller = users.save(new User("greedy@example.com", "$2a$hash", "Greedy"));
+        String token = jwt.generateAccessToken(caller.getId(), caller.getEmail());
+        String ids = java.util.stream.LongStream.rangeClosed(1, 101)
+                .mapToObj(Long::toString).collect(java.util.stream.Collectors.joining(","));
+
+        mvc.perform(get("/auth/internal/users").param("ids", ids)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest());
     }
 }
