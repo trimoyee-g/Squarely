@@ -78,6 +78,34 @@ class LoginThrottleTest {
         verify(values).set(anyString(), eq("1"), eq(Duration.ofMinutes(15)));
     }
 
+    /** A key with no TTL (-1) is not an active block — getExpire can also return null. */
+    @Test
+    void allowsWhenExpiryIsUnknown() {
+        when(redis.getExpire(anyString())).thenReturn(null);
+
+        assertThatCode(() -> throttle.check("a@b.com")).doesNotThrowAnyException();
+    }
+
+    /** A counter Redis failed to increment (null) must not be treated as a failure count. */
+    @Test
+    void recordFailureWritesNoBlockWhenCounterIsNull() {
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.increment(anyString())).thenReturn(null);
+
+        throttle.recordFailure("a@b.com");
+        verify(values, never()).set(anyString(), anyString(), any(Duration.class));
+    }
+
+    /** The shift in backoff() overflows past ~62 steps; the guard must hold the ceiling. */
+    @Test
+    void backoffStaysAtTheCeilingForAbsurdFailureCounts() {
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.increment(anyString())).thenReturn(1_000L);
+
+        throttle.recordFailure("a@b.com");
+        verify(values).set(anyString(), eq("1"), eq(Duration.ofMinutes(15)));
+    }
+
     /** A wrong password must not turn into a 500 just because Redis hiccuped. */
     @Test
     void recordFailureSwallowsRedisErrors() {
@@ -85,6 +113,21 @@ class LoginThrottleTest {
         when(values.increment(anyString())).thenThrow(new RedisConnectionFailureException("down"));
 
         assertThatCode(() -> throttle.recordFailure("a@b.com")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void recordSuccessClearsCounterAndBlock() {
+        throttle.recordSuccess("a@b.com");
+        verify(redis).delete(org.mockito.ArgumentMatchers.anyCollection());
+    }
+
+    /** A correct password must still log the user in when Redis can't be cleared. */
+    @Test
+    void recordSuccessSwallowsRedisErrors() {
+        when(redis.delete(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenThrow(new RedisConnectionFailureException("down"));
+
+        assertThatCode(() -> throttle.recordSuccess("a@b.com")).doesNotThrowAnyException();
     }
 
     /** Emails are hashed, so a keyspace dump leaks no addresses — and case doesn't matter. */

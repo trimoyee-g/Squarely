@@ -97,6 +97,30 @@ class SettlementServiceTest {
         assertEquals(70L, v.id());
     }
 
+    /** No Idempotency-Key header: nothing to replay, so don't even look one up. */
+    @Test
+    void createWithoutIdempotencyKeyInsertsDirectly() {
+        when(settlements.saveAndFlush(any())).thenAnswer(inv -> {
+            Settlement s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", 61L);
+            return s;
+        });
+
+        SettlementView v = service.create(req(1L, 2L), null);
+        assertEquals(61L, v.id());
+        verify(settlements, never()).findByIdempotencyKey(any());
+    }
+
+    /** Insert rejected but no row to replay: the constraint that fired was something else. */
+    @Test
+    void createRaceWithNothingToReplayIsAConflict() {
+        when(settlements.findByIdempotencyKey("key-1")).thenReturn(Optional.empty());
+        when(settlements.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("dup"));
+
+        var ex = assertThrows(ResponseStatusException.class, () -> service.create(req(1L, 2L), "key-1"));
+        assertEquals(409, ex.getStatusCode().value());
+    }
+
     // --- claim ---
 
     @Test
@@ -174,5 +198,47 @@ class SettlementServiceTest {
     void getAllowsAParty() {
         when(settlements.findById(1L)).thenReturn(Optional.of(settlement(1L, SettlementStatus.PENDING)));
         assertEquals(1L, service.get(1L, 2L).id());
+    }
+
+    @Test
+    void getAllowsThePayer() {
+        when(settlements.findById(1L)).thenReturn(Optional.of(settlement(1L, SettlementStatus.PENDING)));
+        assertEquals(1L, service.get(1L, 1L).id());
+    }
+
+    /** A blank UTR is the same as none — don't overwrite the field with whitespace. */
+    @Test
+    void claimWithBlankUtrLeavesItUnset() {
+        when(settlements.findById(1L)).thenReturn(Optional.of(settlement(1L, SettlementStatus.PENDING)));
+
+        SettlementView v = service.claim(1L, 1L, "   ");
+        assertNull(v.utr());
+    }
+
+    // --- list ---
+
+    @Test
+    void listForUserReturnsBothSidesOfTheirSettlements() {
+        when(settlements.findByFromUserIdOrToUserIdOrderByCreatedAtDesc(1L, 1L))
+                .thenReturn(java.util.List.of(settlement(1L, SettlementStatus.PENDING),
+                        settlement(2L, SettlementStatus.SETTLED)));
+
+        var views = service.listForUser(1L);
+        assertEquals(2, views.size());
+        assertEquals(SettlementStatus.SETTLED, views.get(1).status());
+    }
+
+    /**
+     * The transition is already committed when the publish runs, so a broker failure must be
+     * logged and swallowed — rethrowing would report a failure for a state change that stuck.
+     */
+    @Test
+    void acknowledgeSurvivesAFailedPublish() {
+        when(settlements.findById(1L)).thenReturn(Optional.of(settlement(1L, SettlementStatus.PAYMENT_CLAIMED)));
+        when(kafka.send(anyString(), anyString(), any()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")));
+
+        SettlementView v = service.acknowledge(1L, 2L);
+        assertEquals(SettlementStatus.SETTLED, v.status());
     }
 }

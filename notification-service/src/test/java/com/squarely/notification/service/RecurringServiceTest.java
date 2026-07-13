@@ -134,4 +134,87 @@ class RecurringServiceTest {
         assertEquals(Status.SETTLED, o.getStatus());
         assertEquals(42L, o.getSettlementId());
     }
+
+    /** Settling a cash payment nobody recorded as a Settlement still closes the obligation. */
+    @Test
+    void settleWithoutSettlementIdStillSettles() {
+        PaymentObligation o = obligation(7L, 1L, LocalDate.now(), Status.DUE);
+        when(obligations.findById(7L)).thenReturn(Optional.of(o));
+        service.settle(7L, null);
+        assertEquals(Status.SETTLED, o.getStatus());
+        assertNull(o.getSettlementId());
+    }
+
+    @Test
+    void settleIgnoresAnUnknownObligation() {
+        when(obligations.findById(7L)).thenReturn(Optional.empty());
+        assertDoesNotThrow(() -> service.settle(7L, 42L));
+    }
+
+    /** An obligation whose rule was hard-deleted has nobody to notify — advance it, stay quiet. */
+    @Test
+    void tickSkipsNotificationsWhenTheRuleIsGone() {
+        LocalDate today = LocalDate.of(2026, 1, 10);
+        when(rules.findByActiveTrueAndNextDueDateLessThanEqual(any())).thenReturn(List.of());
+        PaymentObligation o = obligation(7L, 1L, today.minusDays(1), Status.UPCOMING);
+        when(obligations.findByStatusInAndDueDateLessThanEqual(any(), eq(today))).thenReturn(List.of(o));
+        when(rules.findById(1L)).thenReturn(Optional.empty());
+
+        service.tick(today);
+
+        assertEquals(Status.OVERDUE, o.getStatus());
+        verifyNoInteractions(notifications);
+    }
+
+    /** Already in the target status: no re-notification on every daily tick. */
+    @Test
+    void tickDoesNotRenotifyAnObligationAlreadyOverdue() {
+        LocalDate today = LocalDate.of(2026, 1, 10);
+        when(rules.findByActiveTrueAndNextDueDateLessThanEqual(any())).thenReturn(List.of());
+        PaymentObligation o = obligation(7L, 1L, today, Status.DUE);   // due today, already DUE
+        when(obligations.findByStatusInAndDueDateLessThanEqual(any(), eq(today))).thenReturn(List.of(o));
+
+        service.tick(today);
+
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void obligationsForReturnsNothingWhenTheUserHasNoRules() {
+        when(rules.findByCreatedBy(9L)).thenReturn(List.of());
+        when(rules.findByMemberUserIdsContaining(9L)).thenReturn(List.of());
+
+        assertTrue(service.obligationsFor(9L).isEmpty());
+        verify(obligations, never()).findByRecurringRuleIdInOrderByDueDateAsc(any());
+    }
+
+    /** History ignores the active flag: deleting a rule must not erase its past bills. */
+    @Test
+    void obligationsForIncludesObligationsOfInactiveRules() {
+        RecurringRule dead = rule(1L, 9L, Cadence.WEEKLY, LocalDate.now(), List.of(9L));
+        dead.setActive(false);
+        when(rules.findByCreatedBy(9L)).thenReturn(List.of(dead));
+        when(rules.findByMemberUserIdsContaining(9L)).thenReturn(List.of());
+        when(obligations.findByRecurringRuleIdInOrderByDueDateAsc(List.of(1L)))
+                .thenReturn(List.of(obligation(7L, 1L, LocalDate.now(), Status.SETTLED)));
+
+        var result = service.obligationsFor(9L);
+        assertEquals(1, result.size());
+        assertEquals(7L, result.get(0).getId());
+    }
+
+    @Test
+    void updateRuleThrows404ForUnknownRule() {
+        when(rules.findById(1L)).thenReturn(Optional.empty());
+        var ex = assertThrows(ResponseStatusException.class, () -> service.updateRule(
+                1L, 9L, "x", "c", new BigDecimal("1"), "INR", Cadence.WEEKLY, null, LocalDate.now(), List.of(1L)));
+        assertEquals(404, ex.getStatusCode().value());
+    }
+
+    @Test
+    void deactivateRuleThrows404ForUnknownRule() {
+        when(rules.findById(1L)).thenReturn(Optional.empty());
+        var ex = assertThrows(ResponseStatusException.class, () -> service.deactivateRule(1L, 9L));
+        assertEquals(404, ex.getStatusCode().value());
+    }
 }

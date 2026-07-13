@@ -73,6 +73,18 @@ class JwtAuthFilterTest {
         verify(chain).doFilter(req, res);
     }
 
+    /** A non-Bearer scheme is not our token — don't try to parse it, just stay anonymous. */
+    @Test
+    void nonBearerAuthorizationHeaderStaysAnonymous() throws Exception {
+        req.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+
+        filter.doFilterInternal(req, res, chain);
+
+        assertNull(currentAuth());
+        verifyNoInteractions(jwt);
+        verify(chain).doFilter(req, res);
+    }
+
     @Test
     void nonNumericSubjectStaysAnonymous() throws Exception {
         Claims claims = mock(Claims.class);

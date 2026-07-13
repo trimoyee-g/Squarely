@@ -34,6 +34,22 @@ class UserKeyResolverTest {
         assertThat(resolve("Bearer " + tokenFor("999", attackerKey))).startsWith("ip:");
     }
 
+    /** No remote address at all (some proxies/tests): one shared bucket beats no rate limit. */
+    @Test
+    void missingRemoteAddressFallsBackToAKnownBucket() {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/auth/login").build());
+        assertThat(resolver.resolve(exchange).block()).isEqualTo("ip:unknown");
+    }
+
+    /** An unresolved address has no InetAddress to bucket on — same shared fallback. */
+    @Test
+    void unresolvedRemoteAddressFallsBackToAKnownBucket() {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/auth/login")
+                .remoteAddress(java.net.InetSocketAddress.createUnresolved("nowhere.invalid", 443))
+                .build());
+        assertThat(resolver.resolve(exchange).block()).isEqualTo("ip:unknown");
+    }
+
     @Test
     void anonymousAndJunkTokensFallBackToIp() {
         assertThat(resolve(null)).startsWith("ip:");

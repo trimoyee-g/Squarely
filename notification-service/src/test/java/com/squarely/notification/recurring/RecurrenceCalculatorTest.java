@@ -29,5 +29,8 @@ class RecurrenceCalculatorTest {
     @Test
     void customRejectsBadInterval() {
         assertThrows(IllegalArgumentException.class, () -> RecurrenceCalculator.next(CUSTOM, 0, LocalDate.now()));
+        assertThrows(IllegalArgumentException.class, () -> RecurrenceCalculator.next(CUSTOM, -1, LocalDate.now()));
+        // intervalDays is only required for CUSTOM, so it arrives null from any other cadence's form
+        assertThrows(IllegalArgumentException.class, () -> RecurrenceCalculator.next(CUSTOM, null, LocalDate.now()));
     }
 }

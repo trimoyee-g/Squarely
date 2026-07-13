@@ -74,4 +74,32 @@ class SplitCalculatorTest {
         assertThrows(IllegalArgumentException.class,
                 () -> SplitCalculator.compute(bd("0.00"), SplitType.EQUAL, map(1, 0)));
     }
+
+    @Test
+    void rejectsNoParticipants() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SplitCalculator.compute(bd("10.00"), SplitType.EQUAL, java.util.Map.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> SplitCalculator.compute(bd("10.00"), SplitType.EQUAL, null));
+    }
+
+    /** A negative "owed" would be a payout dressed up as a split. */
+    @Test
+    void rejectsNegativeExactAmount() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SplitCalculator.compute(bd("10.00"), SplitType.EXACT, map(1, "-5.00", 2, "15.00")));
+    }
+
+    @Test
+    void rejectsNegativeWeight() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SplitCalculator.compute(bd("10.00"), SplitType.SHARES, map(1, "-1", 2, "3")));
+    }
+
+    /** All-zero shares: nothing to divide by, so it's a bad request, not a division by zero. */
+    @Test
+    void rejectsWeightsThatSumToZero() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SplitCalculator.compute(bd("10.00"), SplitType.SHARES, map(1, "0", 2, "0")));
+    }
 }

@@ -76,4 +76,52 @@ class NotificationServiceTest {
         when(repo.countByUserIdAndReadFalse(1L)).thenReturn(3L);
         assertEquals(3L, service.unreadCount(1L));
     }
+
+    /** A subscribed client gets the notification pushed live, not just persisted. */
+    @Test
+    void notifyPushesToSubscribersOfThatUser() throws Exception {
+        when(repo.save(any())).thenAnswer(inv -> notif(1L, 5L));
+        var emitter = mock(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.class);
+        ReflectionTestUtils.setField(service, "emitters",
+                new java.util.concurrent.ConcurrentHashMap<>(java.util.Map.of(
+                        5L, new java.util.concurrent.CopyOnWriteArrayList<>(List.of(emitter)))));
+
+        service.notify(5L, "PAYMENT_DUE", "msg", "OBLIGATION", 1L);
+
+        verify(emitter).send(any(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.SseEventBuilder.class));
+    }
+
+    /** A client that hung up mid-push is dropped, and the notification is still persisted. */
+    @Test
+    void pushDropsAnEmitterThatFailsToSend() throws Exception {
+        when(repo.save(any())).thenAnswer(inv -> notif(1L, 5L));
+        var dead = mock(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.class);
+        doThrow(new java.io.IOException("client gone")).when(dead).send(any(
+                org.springframework.web.servlet.mvc.method.annotation.SseEmitter.SseEventBuilder.class));
+        var live = new java.util.concurrent.CopyOnWriteArrayList<>(List.of(dead));
+        ReflectionTestUtils.setField(service, "emitters",
+                new java.util.concurrent.ConcurrentHashMap<>(java.util.Map.of(5L, live)));
+
+        assertDoesNotThrow(() -> service.notify(5L, "PAYMENT_DUE", "msg", "OBLIGATION", 1L));
+        assertTrue(live.isEmpty(), "the dead emitter is unregistered");
+    }
+
+    /**
+     * subscribe() registers the emitter so later notify()s reach it.
+     * Its completion/timeout/error callbacks all just unregister the emitter, and the
+     * container is what invokes them — the unregister behaviour itself is covered by
+     * pushDropsAnEmitterThatFailsToSend.
+     */
+    @Test
+    void subscribeRegistersTheEmitterForThatUser() {
+        when(repo.save(any())).thenAnswer(inv -> notif(1L, 5L));
+        service.subscribe(5L);
+
+        @SuppressWarnings("unchecked")
+        var emitters = (java.util.Map<Long, java.util.List<Object>>)
+                ReflectionTestUtils.getField(service, "emitters");
+        assertEquals(1, emitters.get(5L).size());
+
+        assertDoesNotThrow(() -> service.notify(5L, "PAYMENT_DUE", "msg", "OBLIGATION", 1L));
+    }
 }

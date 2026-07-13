@@ -79,4 +79,42 @@ class BalanceServiceTest {
         assertEquals(0, b.totalReceivable().compareTo(BigDecimal.ZERO));
         assertEquals(1, b.breakdown().size());
     }
+
+    /** A counterparty you're square with is not a debt — it must not show up as a 0.00 row. */
+    @Test
+    void forUserDropsCounterpartiesThatNetToZero() {
+        when(ledger.findByDebtorIdOrCreditorId(1L, 1L)).thenReturn(List.of(
+                entry(null, 1L, 2L, "20.00"), entry(null, 2L, 1L, "20.00")));
+
+        UserBalances b = service.forUser(1L);
+        assertEquals(0, b.totalOwed().compareTo(BigDecimal.ZERO));
+        assertEquals(0, b.totalReceivable().compareTo(BigDecimal.ZERO));
+        assertTrue(b.breakdown().isEmpty());
+    }
+
+    /** Defensive: an entry the user isn't party to contributes nothing to their balances. */
+    @Test
+    void forUserIgnoresEntriesItIsNotPartyTo() {
+        when(ledger.findByDebtorIdOrCreditorId(1L, 1L)).thenReturn(List.of(entry(null, 2L, 3L, "20.00")));
+
+        UserBalances b = service.forUser(1L);
+        assertTrue(b.breakdown().isEmpty());
+        assertEquals(0, b.totalOwed().compareTo(BigDecimal.ZERO));
+    }
+
+    /** The pairwise net can point the other way than the entries were written. */
+    @Test
+    void forGroupFlipsAPairWhoseNetReverses() {
+        // 1 owes 2 ten, 2 owes 1 thirty -> net: 2 owes 1 twenty
+        when(ledger.findByGroupId(5L)).thenReturn(List.of(
+                entry(5L, 1L, 2L, "10.00"), entry(5L, 2L, 1L, "30.00")));
+
+        GroupBalances b = service.forGroup(5L);
+
+        assertEquals(1, b.owes().size());
+        PairDebt debt = b.owes().get(0);
+        assertEquals(2L, debt.fromUserId());
+        assertEquals(1L, debt.toUserId());
+        assertEquals(0, debt.amount().compareTo(new BigDecimal("20.00")));
+    }
 }

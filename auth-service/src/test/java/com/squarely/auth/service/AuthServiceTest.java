@@ -130,6 +130,40 @@ class AuthServiceTest {
     }
 
     @Test
+    void refreshRejectsExpiredToken() {
+        RefreshToken expired = new RefreshToken(1L, "fam-1", "hash", Instant.now().minusSeconds(1));
+        when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(expired));
+        var ex = assertThrows(ResponseStatusException.class, () -> auth.refresh("raw"));
+        assertEquals(401, ex.getStatusCode().value());
+        // Merely expired is not reuse — the family survives, only this token is dead.
+        verify(refreshTokens, never()).revokeAllForFamily(anyString());
+    }
+
+    /** Expired *and* already spent: still reuse of a leaked chain, so the family dies. */
+    @Test
+    void refreshTreatsAnExpiredRevokedTokenAsReuse() {
+        RefreshToken expiredAndRevoked = new RefreshToken(1L, "fam-1", "hash", Instant.now().minusSeconds(1));
+        expiredAndRevoked.setRevoked(true);
+        when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(expiredAndRevoked));
+
+        assertThrows(ResponseStatusException.class, () -> auth.refresh("raw"));
+        verify(refreshTokens).revokeAllForFamily("fam-1");
+    }
+
+    /** Token row outlived the user (hard-deleted account): rotate must not mint a token for nobody. */
+    @Test
+    void refreshRejectsWhenUserNoLongerExists() {
+        RefreshToken active = new RefreshToken(1L, "fam-1", "hash", Instant.now().plusSeconds(3600));
+        when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(active));
+        when(refreshTokens.revokeIfActive(any())).thenReturn(1);
+        when(users.findById(1L)).thenReturn(Optional.empty());
+
+        var ex = assertThrows(ResponseStatusException.class, () -> auth.refresh("raw"));
+        assertEquals(401, ex.getStatusCode().value());
+        verify(refreshTokens, never()).save(any());
+    }
+
+    @Test
     void refreshRotatesTokenAndIssuesNew() {
         RefreshToken active = new RefreshToken(1L, "fam-1", "hash", Instant.now().plusSeconds(3600));
         when(refreshTokens.findByTokenHash(anyString())).thenReturn(Optional.of(active));
@@ -150,5 +184,19 @@ class AuthServiceTest {
     void logoutRevokesEntireFamily() {
         auth.logout(9L);
         verify(refreshTokens).revokeAllForUser(9L);
+    }
+
+    @Test
+    void findUserReturnsView() {
+        when(users.findById(1L)).thenReturn(Optional.of(userWithId(1L, "a@b.com", "HASHED")));
+        UserView v = auth.findUser(1L);
+        assertEquals("a@b.com", v.email());
+    }
+
+    @Test
+    void findUserThrows404WhenMissing() {
+        when(users.findById(1L)).thenReturn(Optional.empty());
+        var ex = assertThrows(ResponseStatusException.class, () -> auth.findUser(1L));
+        assertEquals(404, ex.getStatusCode().value());
     }
 }
