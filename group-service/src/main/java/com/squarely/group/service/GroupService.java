@@ -1,5 +1,6 @@
 package com.squarely.group.service;
 
+import com.squarely.common.events.AfterCommit;
 import com.squarely.common.events.Events;
 import com.squarely.common.events.Topics;
 import com.squarely.group.api.Dtos.*;
@@ -9,6 +10,8 @@ import com.squarely.group.domain.GroupMember;
 import com.squarely.group.domain.GroupMember.Role;
 import com.squarely.group.repo.Repos.*;
 import com.squarely.group.split.SplitCalculator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -24,6 +27,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class GroupService {
+
+    private static final Logger log = LoggerFactory.getLogger(GroupService.class);
 
     private final GroupRepository groups;
     private final MemberRepository members;
@@ -94,7 +99,7 @@ public class GroupService {
         owed.forEach(expense::addSplit);
         Expense saved = expenses.save(expense);
 
-        kafka.send(Topics.EXPENSE_ADDED, Long.toString(groupId), new Events.ExpenseAdded(
+        publish(Topics.EXPENSE_ADDED, Long.toString(groupId), new Events.ExpenseAdded(
                 saved.getId(), groupId, saved.getDescription(), saved.getCategory(),
                 saved.getAmount(), saved.getCurrency(), saved.getPaidByUserId(),
                 owed, Instant.now()));
@@ -116,6 +121,21 @@ public class GroupService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         requireMember(e.getGroupId(), userId);
         return toView(e, splitsOf(e));
+    }
+
+    /**
+     * Publishes only once the expense is actually committed — an event for a rolled-back expense
+     * would have ledger-service crediting money that was never spent. A send that still fails
+     * after the producer's own retries is logged loudly: see {@link AfterCommit} for why that is
+     * the honest ceiling here, and what fixes it.
+     */
+    private void publish(String topic, String key, Object event) {
+        AfterCommit.run(() -> kafka.send(topic, key, event).whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("LOST EVENT {} key={} — ledger/notifications will not see it: {}",
+                        topic, key, event, ex);
+            }
+        }));
     }
 
     private void requireMember(long groupId, long userId) {

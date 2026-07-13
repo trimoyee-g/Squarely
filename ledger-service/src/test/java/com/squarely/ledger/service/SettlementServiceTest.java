@@ -18,6 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,7 +34,13 @@ class SettlementServiceTest {
     SettlementService service;
 
     @BeforeEach
-    void setUp() { service = new SettlementService(settlements, ledger, kafka); }
+    void setUp() {
+        service = new SettlementService(settlements, ledger, kafka);
+        // A failed publish is now inspected and logged, so send() must return a future. lenient:
+        // the read-only and rejection paths correctly publish nothing.
+        lenient().when(kafka.send(anyString(), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+    }
 
     /** Settlement from user 1 -> user 2, with a given status and id set. */
     private static Settlement settlement(long id, SettlementStatus status) {

@@ -5,6 +5,7 @@ import com.squarely.common.events.Events;
 import com.squarely.common.security.JwtService;
 import com.squarely.ledger.repo.Repos.LedgerRepository;
 import com.squarely.ledger.service.LedgerService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -23,8 +24,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -52,6 +56,14 @@ class LedgerIntegrationTest {
     @Autowired LedgerRepository ledger;
 
     @MockBean KafkaTemplate<String, Object> kafka;
+
+    @BeforeEach
+    void stubBroker() {
+        // Settlement events publish after commit and their send result is inspected, so the
+        // mocked broker has to hand back a future rather than null.
+        when(kafka.send(anyString(), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+    }
 
     private MockHttpServletRequestBuilder as(long userId, MockHttpServletRequestBuilder b) {
         return b.header("Authorization", "Bearer " + jwt.generateAccessToken(userId, "u" + userId + "@x.com"));

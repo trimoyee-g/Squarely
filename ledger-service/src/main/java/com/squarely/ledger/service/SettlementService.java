@@ -1,5 +1,6 @@
 package com.squarely.ledger.service;
 
+import com.squarely.common.events.AfterCommit;
 import com.squarely.common.events.Events;
 import com.squarely.common.events.Topics;
 import com.squarely.ledger.api.Dtos.*;
@@ -10,6 +11,8 @@ import com.squarely.ledger.repo.Repos.LedgerRepository;
 import com.squarely.ledger.repo.Repos.SettlementRepository;
 import com.squarely.ledger.settlement.SettlementStateMachine;
 import com.squarely.ledger.settlement.SettlementStateMachine.Action;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -29,6 +32,8 @@ import java.util.List;
  */
 @Service
 public class SettlementService {
+
+    private static final Logger log = LoggerFactory.getLogger(SettlementService.class);
 
     private final SettlementRepository settlements;
     private final LedgerRepository ledger;
@@ -71,7 +76,7 @@ public class SettlementService {
         s.setClaimedAt(Instant.now());
         if (utr != null && !utr.isBlank()) s.setUtr(utr);
         settlements.save(s);
-        kafka.send(Topics.PAYMENT_CLAIMED, Long.toString(id), new Events.PaymentClaimed(
+        publish(Topics.PAYMENT_CLAIMED, Long.toString(id), new Events.PaymentClaimed(
                 s.getId(), s.getIdempotencyKey(), s.getFromUserId(), s.getToUserId(),
                 s.getAmount(), s.getCurrency(), s.getUtr(), s.getClaimedAt()));
         return toView(s);
@@ -95,7 +100,7 @@ public class SettlementService {
             // Ledger entry for this settlement already exists — no double credit.
         }
 
-        kafka.send(Topics.PAYMENT_ACKNOWLEDGED, Long.toString(id), new Events.PaymentAcknowledged(
+        publish(Topics.PAYMENT_ACKNOWLEDGED, Long.toString(id), new Events.PaymentAcknowledged(
                 s.getId(), s.getFromUserId(), s.getToUserId(), actingUserId, s.getAcknowledgedAt()));
         return toView(s);
     }
@@ -108,7 +113,7 @@ public class SettlementService {
         s.setDisputeReason(reason);
         s.setDisputedAt(Instant.now());
         settlements.save(s);
-        kafka.send(Topics.PAYMENT_DISPUTED, Long.toString(id), new Events.PaymentDisputed(
+        publish(Topics.PAYMENT_DISPUTED, Long.toString(id), new Events.PaymentDisputed(
                 s.getId(), s.getFromUserId(), s.getToUserId(), actingUserId, reason, s.getDisputedAt()));
         return toView(s);
     }
@@ -126,6 +131,21 @@ public class SettlementService {
     public List<SettlementView> listForUser(long userId) {
         return settlements.findByFromUserIdOrToUserIdOrderByCreatedAtDesc(userId, userId)
                 .stream().map(this::toView).toList();
+    }
+
+    /**
+     * Publishes only once the settlement transition is actually committed — an event for a
+     * rolled-back or optimistically-locked-out transition would tell notification-service a
+     * payment was acknowledged when it was not. A send that still fails after the producer's own
+     * retries is logged loudly: see {@link AfterCommit} for the ceiling and the fix.
+     */
+    private void publish(String topic, String key, Object event) {
+        AfterCommit.run(() -> kafka.send(topic, key, event).whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("LOST EVENT {} key={} — downstream will not see it: {}",
+                        topic, key, event, ex);
+            }
+        }));
     }
 
     private Settlement load(long id) {

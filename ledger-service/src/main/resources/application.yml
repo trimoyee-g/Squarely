@@ -22,9 +22,15 @@ spring:
     consumer:
       group-id: ledger-service
       auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      # Deserialization runs *before* the error handler can see the record, so a malformed
+      # payload thrown straight from JsonDeserializer can never be skipped — the container
+      # retries the same record forever and the partition stops moving. ErrorHandlingDeserializer
+      # catches it, hands the error handler a record it can dead-letter, and the queue drains.
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
         spring.json.trusted.packages: "com.squarely.common.events"
 
 security:

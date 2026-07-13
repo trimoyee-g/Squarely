@@ -18,6 +18,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -87,6 +88,9 @@ class GroupIntegrationTest {
 
     @Test
     void addExpensePersistsSplitsAndPublishesEvent() throws Exception {
+        // Publishing now happens after the transaction commits and the send result is checked,
+        // so the mocked broker has to return a future instead of null.
+        when(kafka.send(anyString(), anyString(), any())).thenReturn(CompletableFuture.completedFuture(null));
         long groupId = createGroupAs(1L, "Dinner");
         mvc.perform(as(1L, post("/groups/" + groupId + "/members")).contentType(MediaType.APPLICATION_JSON)
                         .content(body(Map.of("userId", 2, "role", "MEMBER"))))

@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -96,6 +97,9 @@ class GroupServiceTest {
     @Test
     void addExpenseComputesSplitsSavesAndEmitsEvent() {
         when(members.existsByGroupIdAndUserId(eq(5L), anyLong())).thenReturn(true);
+        // The send result is inspected now (a failed publish is a lost expense), so the mock has
+        // to hand back a future rather than null.
+        when(kafka.send(anyString(), anyString(), any())).thenReturn(CompletableFuture.completedFuture(null));
         when(expenses.save(any())).thenAnswer(inv -> {
             Expense e = inv.getArgument(0);
             ReflectionTestUtils.setField(e, "id", 77L);

@@ -12,9 +12,14 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       # LoginThrottle fails closed, so a *slow* Redis must not become a slow login: cap the
-      # wait hard and treat a timeout as "can't reach it".
-      timeout: 50ms
-      connect-timeout: 50ms
+      # command wait and treat a timeout as "can't reach it". 250ms, not 50ms: a local Redis
+      # answers in ~1ms, but the *first* command on a cold Netty stack (plus any GC pause)
+      # blows a 50ms budget, and failing closed turns that jitter into a 503.
+      timeout: 250ms
+      # Connecting is not commanding. Lettuce opens the connection lazily on the first command,
+      # and a TCP (+TLS, +DNS) handshake blows past 50ms on a cold start or after a Redis
+      # restart — capping it that tight 503s every login until a handshake gets lucky.
+      connect-timeout: 1s
   jpa:
     hibernate:
       ddl-auto: validate      # Flyway owns the schema
