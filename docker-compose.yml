@@ -74,7 +74,7 @@ services:
     # ponytail: bash TCP probe — the JRE image ships no curl/wget, and "port is accepting
     # connections" is enough here (a client that starts a touch early just retries).
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8761"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8761"]
       interval: 10s
       timeout: 5s
       retries: 12
