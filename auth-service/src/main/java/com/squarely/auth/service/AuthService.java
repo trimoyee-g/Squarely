@@ -30,16 +30,18 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokens;
     private final PasswordEncoder encoder;
     private final JwtService jwt;
+    private final LoginThrottle throttle;
     private final Duration refreshTtl;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UserRepository userRepository, RefreshTokenRepository refreshTokens,
-            PasswordEncoder encoder, JwtService jwt,
+            PasswordEncoder encoder, JwtService jwt, LoginThrottle throttle,
             @Value("${security.jwt.refresh-ttl:P30D}") Duration refreshTtl) {
         this.userRepository = userRepository;
         this.refreshTokens = refreshTokens;
         this.encoder = encoder;
         this.jwt = jwt;
+        this.throttle = throttle;
         this.refreshTtl = refreshTtl;
     }
 
@@ -54,9 +56,21 @@ public class AuthService {
 
     @Transactional
     public TokenResponse login(LoginRequest req) {
+        // Before the BCrypt hash, not after: the throttle exists to stop us spending CPU on
+        // an attacker's guesses. Throws 429 while backing off, 503 if Redis is unreachable.
+        throttle.check(req.email());
         User user = userRepository.findByEmail(req.email())
                 .filter(u -> encoder.matches(req.password(), u.getPasswordHash()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
+                .orElseGet(() -> {
+                    // Counts unknown emails too — otherwise "no such user" is a free oracle
+                    // for enumerating which addresses are registered.
+                    throttle.recordFailure(req.email());
+                    return null;
+                });
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+        }
+        throttle.recordSuccess(req.email());
         return issueTokens(user);
     }
 

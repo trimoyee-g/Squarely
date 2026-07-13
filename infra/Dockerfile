@@ -5,6 +5,8 @@ FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /src
 COPY pom.xml .
 COPY common/pom.xml common/pom.xml
+COPY discovery-service/pom.xml discovery-service/pom.xml
+COPY gateway-service/pom.xml gateway-service/pom.xml
 COPY auth-service/pom.xml auth-service/pom.xml
 COPY group-service/pom.xml group-service/pom.xml
 COPY ledger-service/pom.xml ledger-service/pom.xml

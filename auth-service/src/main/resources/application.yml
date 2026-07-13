@@ -8,6 +8,13 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/auth}
     username: ${SPRING_DATASOURCE_USERNAME:squarely}
     password: ${SPRING_DATASOURCE_PASSWORD}
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      # LoginThrottle fails closed, so a *slow* Redis must not become a slow login: cap the
+      # wait hard and treat a timeout as "can't reach it".
+      timeout: 50ms
+      connect-timeout: 50ms
   jpa:
     hibernate:
       ddl-auto: validate      # Flyway owns the schema
@@ -27,3 +34,12 @@ management:
     web:
       exposure:
         include: health,info
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+  instance:
+    # Register by IP: in Compose the container hostname is resolvable, but on a VM/K8s the
+    # hostname often isn't what the gateway can dial.
+    prefer-ip-address: true

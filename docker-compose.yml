@@ -2,6 +2,22 @@
 # ponytail: single Postgres with 4 DBs (one per service, no shared tables) and a
 # single-broker KRaft Kafka. Split into separate DB instances / a Kafka cluster
 # only when independent scaling or HA actually becomes a requirement.
+
+# Shared by the four business services. Anchors live up here rather than on auth-service, so
+# auth can add Redis (LoginThrottle) without the other three inheriting a dependency they
+# don't have.
+x-service-env: &svc-env
+  SPRING_DATASOURCE_USERNAME: squarely
+  SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET}
+  EUREKA_URI: http://discovery-service:8761/eureka
+
+x-service-deps: &svc-deps
+  postgres: { condition: service_healthy }
+  kafka: { condition: service_healthy }
+  discovery-service: { condition: service_healthy }
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -51,18 +67,45 @@ services:
       timeout: 10s
       retries: 15
 
-  auth-service:
-    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: auth-service } }
-    environment: &svc-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth
-      SPRING_DATASOURCE_USERNAME: squarely
-      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  # Eureka registry. Everything else registers here; the gateway resolves lb:// through it.
+  discovery-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: discovery-service } }
+    ports: ["8761:8761"]
+    # ponytail: bash TCP probe — the JRE image ships no curl/wget, and "port is accepting
+    # connections" is enough here (a client that starts a touch early just retries).
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8761"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Single public entrypoint. The service ports below stay published only so you can hit
+  # a service directly while debugging — in a real deployment only this port is exposed.
+  gateway-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: gateway-service } }
+    environment:
       SPRING_DATA_REDIS_HOST: redis
+      EUREKA_URI: http://discovery-service:8761/eureka
+      # Verifies access tokens to key rate limits per user. Same secret, no new trust: the
+      # gateway issues nothing, and the services still validate independently.
       SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET}
     depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      discovery-service: { condition: service_healthy }
+    ports: ["8080:8080"]
+
+  # The only business service on Redis: LoginThrottle's failed-login counters. group, ledger
+  # and notification keep idempotency and locking in Postgres and never touch it.
+  auth-service:
+    build: { context: ., dockerfile: infra/Dockerfile, args: { SERVICE: auth-service } }
+    environment:
+      <<: *svc-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth
+      SPRING_DATA_REDIS_HOST: redis
+    depends_on:
+      <<: *svc-deps
+      # Hard dependency, deliberately: LoginThrottle fails closed, so no Redis means no
+      # logins. Redis unreachable is exactly when an attacker wants the brakes off.
       redis: { condition: service_healthy }
     ports: ["8081:8080"]
 
@@ -71,10 +114,7 @@ services:
     environment:
       <<: *svc-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/groups
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    depends_on: *svc-deps
     ports: ["8082:8080"]
 
   ledger-service:
@@ -82,10 +122,7 @@ services:
     environment:
       <<: *svc-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ledger
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    depends_on: *svc-deps
     ports: ["8083:8080"]
 
   notification-service:
@@ -93,10 +130,7 @@ services:
     environment:
       <<: *svc-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notify
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    depends_on: *svc-deps
     ports: ["8084:8080"]
 
 volumes:

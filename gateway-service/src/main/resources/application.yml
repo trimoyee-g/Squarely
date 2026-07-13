@@ -1,0 +1,96 @@
+server:
+  port: 8080
+  # Trust X-Forwarded-* from the proxy/LB in front of the gateway, so the rate-limiter
+  # key is the real client IP and not the LB's.
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: gateway-service
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: 6379
+
+  cloud:
+    gateway:
+      # Same-origin in prod (frontend served behind this gateway); the dev server on
+      # 5173 is the only cross-origin caller.
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins: ${GATEWAY_ALLOWED_ORIGINS:http://localhost:5173}
+            allowed-methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+            allowed-headers: "*"
+            allow-credentials: true
+
+      # Leaky bucket, drained in Redis so the limit holds across gateway replicas. Spring's
+      # RedisRateLimiter is a token bucket; setting burstCapacity equal to replenishRate
+      # removes the burst allowance, which is exactly a leaky bucket: a constant drain rate,
+      # no credit accrued while idle. Over the limit gets 429, not queued — queueing at the
+      # edge would trade a fast rejection for held connections and timeouts.
+      #
+      # Keyed by JWT subject, falling back to IP for anonymous callers (see UserKeyResolver),
+      # and fail-closed when Redis is down (see FailClosedRateLimiter) rather than Spring's
+      # fail-open default.
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            key-resolver: "#{@userKeyResolver}"
+            rate-limiter: "#{@failClosedRateLimiter}"
+            redis-rate-limiter.replenishRate: 20    # steady req/s per user — the drain rate
+            redis-rate-limiter.burstCapacity: 20    # == replenishRate: no burst above the drain
+
+      # lb:// resolves through Eureka: the target is a service *name*, and the load balancer
+      # picks a live instance from the registry. Routes stay explicit — the discovery locator
+      # that auto-exposes every registered service at /SERVICE-NAME/** is off, since that
+      # would publish internal services the moment they register.
+      routes:
+        - id: auth
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/**
+          # The only anonymous routes, so this bucket is per-IP in practice — which a botnet
+          # walks straight around. The real defence for credential stuffing is auth-service's
+          # per-account LoginThrottle; this just keeps a single host from being loud.
+          filters:
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@userKeyResolver}"
+                rate-limiter: "#{@failClosedRateLimiter}"
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 5
+
+        - id: group
+          uri: lb://group-service
+          predicates:
+            - Path=/groups/**,/expenses/**
+
+        - id: ledger
+          uri: lb://ledger-service
+          predicates:
+            - Path=/balances/**,/settlements/**,/personal-debts/**,/ledger/**
+
+        - id: notification
+          uri: lb://notification-service
+          predicates:
+            - Path=/notifications/**,/recurring/**,/obligations/**
+
+# Same secret as the services — the gateway only *verifies* tokens, to key rate limits on the
+# user (UserKeyResolver). It issues nothing and authorises nothing; services validate too.
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,gateway

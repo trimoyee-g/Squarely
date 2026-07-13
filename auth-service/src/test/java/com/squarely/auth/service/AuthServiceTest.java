@@ -31,12 +31,14 @@ class AuthServiceTest {
     @Mock RefreshTokenRepository refreshTokens;
     @Mock PasswordEncoder encoder;
     @Mock JwtService jwt;
+    // Throttle behaviour is LoginThrottleTest's job; here it's a no-op that lets logins past.
+    @Mock LoginThrottle throttle;
 
     AuthService auth;
 
     @BeforeEach
     void setUp() {
-        auth = new AuthService(users, refreshTokens, encoder, jwt, Duration.ofDays(30));
+        auth = new AuthService(users, refreshTokens, encoder, jwt, throttle, Duration.ofDays(30));
     }
 
     private static User userWithId(long id, String email, String hash) {

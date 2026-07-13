@@ -19,6 +19,8 @@
 
     <modules>
         <module>common</module>
+        <module>discovery-service</module>
+        <module>gateway-service</module>
         <module>auth-service</module>
         <module>group-service</module>
         <module>ledger-service</module>
@@ -28,6 +30,8 @@
     <properties>
         <java.version>17</java.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <!-- Release train matching Spring Boot 3.3.x -->
+        <spring-cloud.version>2023.0.3</spring-cloud.version>
     </properties>
 
     <!-- Lombok inherited by every module. provided scope + plugin exclude keeps it
@@ -47,6 +51,13 @@
                 <artifactId>common</artifactId>
                 <version>0.1.0</version>
             </dependency>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -64,6 +75,9 @@
                 <configuration>
                     <systemPropertyVariables>
                         <security.jwt.secret>test-only-secret-not-used-outside-the-test-jvm-256bit!!</security.jwt.secret>
+                        <!-- Tests boot the real context but there's no registry to talk to;
+                             without this the Eureka client retries and spams the log. -->
+                        <eureka.client.enabled>false</eureka.client.enabled>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

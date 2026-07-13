@@ -1,0 +1,25 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: discovery-service
+
+eureka:
+  # ponytail: single standalone registry — it doesn't register with or fetch from a peer,
+  # because there is no peer. Run a second replica with peer-aware defaultZone only when
+  # the registry going down (services keep their cached registry, so this is survivable)
+  # actually stops being acceptable.
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+  server:
+    # Self-preservation guards against mass eviction on a network blip. Off locally, where
+    # services get stopped all the time and stale entries just confuse the gateway.
+    enable-self-preservation: ${EUREKA_SELF_PRESERVATION:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -35,6 +36,13 @@ class AuthIntegrationTest {
     @Container
     @ServiceConnection
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    // Real Redis, because LoginThrottle fails closed: with no Redis to reach, every login
+    // here would be a 503. A mock would hide exactly the coupling this test exists to prove.
+    @Container
+    @ServiceConnection(name = "redis")
+    static final GenericContainer<?> redis =
+            new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;

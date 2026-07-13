@@ -8,31 +8,34 @@
         <artifactId>squarely-parent</artifactId>
         <version>0.1.0</version>
     </parent>
-    <artifactId>common</artifactId>
-    <name>common</name>
+    <artifactId>gateway-service</artifactId>
+    <name>gateway-service</name>
 
+    <!-- Reactive (Netty) module: no spring-boot-starter-web here, it would clash with
+         the WebFlux stack Spring Cloud Gateway runs on. -->
     <dependencies>
-        <!-- Every service that depends on common registers itself with Eureka; the client
-             is here rather than repeated in four poms. Auto-config is inert without an
-             eureka.client.service-url, and the parent's surefire config disables it in tests. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway</artifactId>
+        </dependency>
+        <!-- Registry client + the load balancer behind lb:// route URIs. -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
+        <!-- Backs the RequestRateLimiter filter (token bucket lives in Redis, so the
+             limit holds across gateway replicas). -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
-        <!-- for org.springframework.dao.OptimisticLockingFailureException in the shared
-             exception handler; the web/security starters don't pull spring-tx in. -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-tx</artifactId>
-        </dependency>
+        <!-- Verifies the access token to key rate limits on the user. jjwt directly rather
+             than via `common`, which drags in the servlet web starter and would fight the
+             WebFlux stack this module runs on. -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
@@ -56,4 +59,13 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
 </project>
